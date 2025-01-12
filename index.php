@@ -52,7 +52,7 @@ class RSS_Feed_Monitor {
             null,
             'rss-feed-monitor'
         );
-        
+
 
         add_settings_field(
             'rss_feed_url',
@@ -94,11 +94,11 @@ class RSS_Feed_Monitor {
     public function cleanup_old_feeds() {
         $options = get_option($this->option_name);
         $delete_every = isset($options['delete_every']) ? $options['delete_every'] : 'week';
-    
+
         global $wpdb;
         $table_name = $wpdb->prefix . 'rss_feed_monitor';
         $date_limit = date('Y-m-d H:i:s', strtotime("-1 $delete_every"));
-    
+
         $wpdb->query(
             $wpdb->prepare("DELETE FROM $table_name WHERE retrieved_at < %s", $date_limit)
         );
@@ -314,6 +314,4 @@ add_action('admin_init', function () {
         wp_redirect(admin_url('options-general.php?page=rss-feed-monitor'));
         exit;
     }
-
-
 });
