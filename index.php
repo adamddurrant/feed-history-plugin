@@ -52,6 +52,7 @@ class RSS_Feed_Monitor {
             null,
             'rss-feed-monitor'
         );
+        
 
         add_settings_field(
             'rss_feed_url',
@@ -68,17 +69,39 @@ class RSS_Feed_Monitor {
             'rss-feed-monitor',
             'rss_feed_monitor_settings_section'
         );
+
+        add_settings_field(
+            'delete_every',
+            'Delete Every',
+            [$this, 'delete_every_html'],
+            'rss-feed-monitor',
+            'rss_feed_monitor_settings_section'
+        );
     }
 
     public function validate_options($input) {
         $validated = [];
         $validated['rss_feed_url'] = esc_url_raw($input['rss_feed_url']);
         $validated['rss_feed_frequency'] = in_array($input['rss_feed_frequency'], ['hourly', 'daily', 'weekly']) ? $input['rss_feed_frequency'] : 'hourly';
+        $validated['delete_every'] = in_array($input['delete_every'], ['week', 'month', 'year']) ? $input['delete_every'] : 'week';
 
         // Update cron schedule based on frequency
         $this->update_cron_schedule($validated['rss_feed_frequency']);
 
         return $validated;
+    }
+
+    public function cleanup_old_feeds() {
+        $options = get_option($this->option_name);
+        $delete_every = isset($options['delete_every']) ? $options['delete_every'] : 'week';
+    
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'rss_feed_monitor';
+        $date_limit = date('Y-m-d H:i:s', strtotime("-1 $delete_every"));
+    
+        $wpdb->query(
+            $wpdb->prepare("DELETE FROM $table_name WHERE retrieved_at < %s", $date_limit)
+        );
     }
 
     public function update_cron_schedule($frequency) {
@@ -90,6 +113,16 @@ class RSS_Feed_Monitor {
         $options = get_option($this->option_name);
         $rss_feed_url = isset($options['rss_feed_url']) ? $options['rss_feed_url'] : '';
         echo "<input type='text' name='{$this->option_name}[rss_feed_url]' value='" . esc_attr($rss_feed_url) . "' class='regular-text'>";
+    }
+
+    public function delete_every_html() {
+        $options = get_option($this->option_name);
+        $delete_every = isset($options['delete_every']) ? $options['delete_every'] : 'week';
+        echo "<select name='{$this->option_name}[delete_every]'>
+                <option value='week' " . selected($delete_every, 'week', false) . ">Week</option>
+                <option value='month' " . selected($delete_every, 'month', false) . ">Month</option>
+                <option value='year' " . selected($delete_every, 'year', false) . ">Year</option>
+              </select>";
     }
 
     public function rss_feed_frequency_html() {
@@ -105,7 +138,9 @@ class RSS_Feed_Monitor {
     public function settings_page_html() {
         $next_cron = wp_next_scheduled('rss_feed_monitor_cron_hook');
         $next_cron_time = $next_cron ? date('Y-m-d H:i:s', $next_cron) : 'Not scheduled';
-    
+
+        $is_feed_empty = empty($rss_feed_url);
+
         echo "<div class='wrap'>
                 <h1>RSS Feed Monitor</h1>
                 <form method='post' action='options.php'>";
@@ -113,16 +148,27 @@ class RSS_Feed_Monitor {
         do_settings_sections('rss-feed-monitor');
         submit_button();
         echo "</form>
-              <h2>Next Feed Fetch</h2>
-              <p id='cron-time'>Next fetch scheduled for: <strong>{$next_cron_time}</strong></p>
-              <p>Countdown: <span id='countdown-timer'>Loading...</span></p>
+              <div class='info-container'>
+                <h2>Next Feed Fetch</h2>
+                  <p id='cron-time'>Next fetch scheduled for: <strong>{$next_cron_time}</strong></p>
+                  <p id='countdown-timer'>" . ($is_feed_empty ? 'Add a feed to start' : '') . "</p>
+              </div>
               <h2>Saved RSS Feed Data</h2>
               " . $this->display_saved_feeds() . "
               </div>
               <script>
                   document.addEventListener('DOMContentLoaded', function() {
-                      const nextCronTimestamp = " . ($next_cron * 1000) . "; // Convert to milliseconds
                       const timerElement = document.getElementById('countdown-timer');
+                      const infoContainer = document.querySelector('.info-container');
+                      const isFeedEmpty = " . ($is_feed_empty ? 'true' : 'false') . ";
+    
+                      if (isFeedEmpty) {
+                          infoContainer.innerHTML = '<p>Add a feed to start</p>';
+                          return;
+                      }
+    
+                      // You can continue with the countdown logic if the feed is not empty
+                      const nextCronTimestamp = " . ($next_cron * 1000) . "; // Convert to milliseconds
     
                       function updateCountdown() {
                           const now = new Date().getTime();
@@ -164,6 +210,8 @@ class RSS_Feed_Monitor {
                             <a href='" . esc_url(add_query_arg(['download_feed_id' => $row->id], admin_url('options-general.php?page=rss-feed-monitor'))) . "'>Download</a>
                             |
                             <a href='" . esc_url(add_query_arg(['view_feed_id' => $row->id], admin_url('options-general.php?page=rss-feed-monitor'))) . "' target='_blank'>View</a>
+                            |
+                            <a style='color: red;' href='" . esc_url(add_query_arg(['delete_feed_id' => $row->id], admin_url('options-general.php?page=rss-feed-monitor'))) . "'>Delete</a>
                             </td>
                         </tr>";
         }
@@ -173,6 +221,10 @@ class RSS_Feed_Monitor {
     }
 
     public function fetch_and_store_rss_feed() {
+
+        add_action('rss_feed_monitor_cron_hook', [$this, 'fetch_and_store_rss_feed']);
+        add_action('rss_feed_monitor_cron_hook', [$this, 'cleanup_old_feeds']);
+
         $options = get_option($this->option_name);
         $rss_feed_url = isset($options['rss_feed_url']) ? $options['rss_feed_url'] : '';
 
@@ -229,7 +281,7 @@ register_activation_hook(__FILE__, function () {
     dbDelta($sql);
 });
 
-// Add download & view functionality
+// Add download, view & delete functionality
 add_action('admin_init', function () {
     if (isset($_GET['download_feed_id']) || isset($_GET['view_feed_id'])) {
         global $wpdb;
@@ -247,4 +299,21 @@ add_action('admin_init', function () {
             exit;
         }
     }
+
+    if (isset($_GET['delete_feed_id'])) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'rss_feed_monitor';
+
+        // Get the feed ID from the query parameter
+        $id = intval($_GET['delete_feed_id']);
+
+        // Delete the row from the database
+        $wpdb->delete($table_name, ['id' => $id], ['%d']);
+
+        // Redirect to avoid resubmitting the delete request
+        wp_redirect(admin_url('options-general.php?page=rss-feed-monitor'));
+        exit;
+    }
+
+
 });
