@@ -84,17 +84,17 @@ class RSS_Feed_Monitor {
         $validated['rss_feed_url'] = esc_url_raw($input['rss_feed_url']);
         $validated['rss_feed_frequency'] = in_array($input['rss_feed_frequency'], ['hourly', 'daily', 'weekly']) ? $input['rss_feed_frequency'] : 'hourly';
         $validated['delete_every'] = in_array($input['delete_every'], ['week', 'month', 'year']) ? $input['delete_every'] : 'week';
-    
+
         $existing_options = get_option($this->option_name);
-    
+
         // Trigger immediate fetch if the feed URL is added or changed
         if (
-            empty($existing_options['rss_feed_url']) || 
+            empty($existing_options['rss_feed_url']) ||
             $existing_options['rss_feed_url'] !== $validated['rss_feed_url']
         ) {
             $this->fetch_and_store_rss_feed();
         }
-    
+
         // Reschedule cron if frequency or feed URL changes
         if (
             $existing_options['rss_feed_frequency'] !== $validated['rss_feed_frequency'] ||
@@ -102,10 +102,10 @@ class RSS_Feed_Monitor {
         ) {
             $this->update_cron_schedule($validated['rss_feed_frequency']);
         }
-    
+
         return $validated;
     }
-    
+
 
     public function cleanup_old_feeds() {
         $options = get_option($this->option_name);
@@ -157,7 +157,7 @@ class RSS_Feed_Monitor {
         $next_cron = wp_next_scheduled('rss_feed_monitor_cron_hook');
         $next_cron_time = $next_cron ? date('Y-m-d H:i:s', $next_cron) : 'Not scheduled';
         $is_feed_empty = empty($rss_feed_url);
-    
+
         echo "<div class='wrap'>
                 <h1>RSS Feed Monitor</h1>
                 <form method='post' action='options.php'>";
@@ -168,47 +168,19 @@ class RSS_Feed_Monitor {
               <div class='info-container'>
                 <h2>Next Feed Fetch</h2>
                 <p>Next fetch scheduled for: <strong>{$next_cron_time}</strong></p>";
-    
+
         if ($is_feed_empty) {
             echo "<p style='color: red;'>Add a feed to start monitoring.</p>";
         } else {
             echo "<p id='countdown-timer'></p>";
         }
-    
+
         echo "</div>
               <h2>Saved RSS Feed Data</h2>
               " . $this->display_saved_feeds() . "
               </div>";
-    
-        if (!$is_feed_empty) {
-            echo "<script>
-                    document.addEventListener('DOMContentLoaded', function() {
-                        const timerElement = document.getElementById('countdown-timer');
-                        const nextCronTimestamp = " . ($next_cron * 1000) . "; // Convert to milliseconds
-    
-                        function updateCountdown() {
-                            const now = new Date().getTime();
-                            const distance = nextCronTimestamp - now;
-    
-                            if (distance <= 0) {
-                                timerElement.textContent = 'Fetching now or no fetch scheduled!';
-                                return;
-                            }
-    
-                            const hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                            const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
-                            const seconds = Math.floor((distance % (1000 * 60)) / 1000);
-    
-                            timerElement.textContent = hours + 'h ' + minutes + 'm ' + seconds + 's ';
-                        }
-    
-                        updateCountdown();
-                        setInterval(updateCountdown, 1000);
-                    });
-                  </script>";
-        }
     }
-    
+
 
     private function display_saved_feeds() {
         global $wpdb;
