@@ -84,27 +84,22 @@ class RSS_Feed_Monitor {
         $validated['rss_feed_url'] = esc_url_raw($input['rss_feed_url']);
         $validated['rss_feed_frequency'] = in_array($input['rss_feed_frequency'], ['hourly', 'daily', 'weekly']) ? $input['rss_feed_frequency'] : 'hourly';
         $validated['delete_every'] = in_array($input['delete_every'], ['week', 'month', 'year']) ? $input['delete_every'] : 'week';
-
+    
         $existing_options = get_option($this->option_name);
-
-        // Trigger immediate fetch if the feed URL is added or changed
-        if (
-            empty($existing_options['rss_feed_url']) ||
-            $existing_options['rss_feed_url'] !== $validated['rss_feed_url']
-        ) {
-            $this->fetch_and_store_rss_feed();
-        }
-
+    
         // Reschedule cron if frequency or feed URL changes
         if (
+            empty($existing_options) ||
             $existing_options['rss_feed_frequency'] !== $validated['rss_feed_frequency'] ||
             $existing_options['rss_feed_url'] !== $validated['rss_feed_url']
         ) {
             $this->update_cron_schedule($validated['rss_feed_frequency']);
         }
-
+    
         return $validated;
     }
+    
+    
 
 
     public function cleanup_old_feeds() {
@@ -121,9 +116,21 @@ class RSS_Feed_Monitor {
     }
 
     public function update_cron_schedule($frequency) {
+        // Clear any existing scheduled events for this hook
         wp_clear_scheduled_hook('rss_feed_monitor_cron_hook');
-        wp_schedule_event(time(), $frequency, 'rss_feed_monitor_cron_hook');
+    
+        // Schedule a new event starting from now, based on the frequency
+        $intervals = [
+            'hourly' => HOUR_IN_SECONDS,
+            'daily' => DAY_IN_SECONDS,
+            'weekly' => WEEK_IN_SECONDS,
+        ];
+        $interval = isset($intervals[$frequency]) ? $intervals[$frequency] : HOUR_IN_SECONDS;
+    
+        $next_schedule_time = time() + $interval;
+        wp_schedule_event($next_schedule_time, $frequency, 'rss_feed_monitor_cron_hook');
     }
+    
 
     public function rss_feed_url_html() {
         $options = get_option($this->option_name);
@@ -155,9 +162,11 @@ class RSS_Feed_Monitor {
         $options = get_option($this->option_name);
         $rss_feed_url = isset($options['rss_feed_url']) ? $options['rss_feed_url'] : '';
         $next_cron = wp_next_scheduled('rss_feed_monitor_cron_hook');
-        $next_cron_time = $next_cron ? date('Y-m-d H:i:s', $next_cron) : 'Not scheduled';
-        $is_feed_empty = empty($rss_feed_url);
-
+    
+        $next_cron_time = $next_cron
+            ? date('Y-m-d H:i:s', $next_cron)
+            : ($rss_feed_url ? 'Not scheduled (Check cron setup)' : 'No feed URL set');
+    
         echo "<div class='wrap'>
                 <h1>RSS Feed Monitor</h1>
                 <form method='post' action='options.php'>";
@@ -168,18 +177,17 @@ class RSS_Feed_Monitor {
               <div class='info-container'>
                 <h2>Next Feed Fetch</h2>
                 <p>Next fetch scheduled for: <strong>{$next_cron_time}</strong></p>";
-
-        if ($is_feed_empty) {
+    
+        if (empty($rss_feed_url)) {
             echo "<p style='color: red;'>Add a feed to start monitoring.</p>";
-        } else {
-            echo "<p id='countdown-timer'></p>";
         }
-
+    
         echo "</div>
               <h2>Saved RSS Feed Data</h2>
               " . $this->display_saved_feeds() . "
               </div>";
     }
+    
 
 
     private function display_saved_feeds() {
@@ -210,11 +218,7 @@ class RSS_Feed_Monitor {
         return $output;
     }
 
-    public function fetch_and_store_rss_feed() {
-
-        add_action('rss_feed_monitor_cron_hook', [$this, 'fetch_and_store_rss_feed']);
-        add_action('rss_feed_monitor_cron_hook', [$this, 'cleanup_old_feeds']);
-
+        public function fetch_and_store_rss_feed() {
         $options = get_option($this->option_name);
         $rss_feed_url = isset($options['rss_feed_url']) ? $options['rss_feed_url'] : '';
 
@@ -225,7 +229,7 @@ class RSS_Feed_Monitor {
         $response = wp_remote_get($rss_feed_url);
 
         if (is_wp_error($response) || wp_remote_retrieve_response_code($response) != 200) {
-            echo `Error fetching feed: $response`;
+            error_log('Error fetching feed: ' . (is_wp_error($response) ? $response->get_error_message() : 'Invalid response code'));
             return;
         }
 
